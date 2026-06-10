@@ -153,12 +153,14 @@ export const LayersPanel: React.FC = () => {
               onClick={() => setActiveLayer(doc.id, layer.id)}
               className={`flex items-center gap-2 p-2 rounded cursor-pointer border select-none transition-all group ${
                 isActive
-                  ? 'bg-blue-600/15 border-blue-500 text-neutral-100 shadow-md shadow-black/20'
-                  : 'bg-neutral-950/30 border-neutral-800 hover:border-neutral-700 text-neutral-300'
+                  ? "bg-blue-600/15 border-blue-500/20 text-neutral-100 shadow-md shadow-black/20"
+                  : "bg-neutral-950/30 border-neutral-800 hover:border-neutral-700 text-neutral-300"
               }`}
             >
               {/* Drag marker */}
-              <div className="text-neutral-600 group-hover:text-neutral-400 cursor-ns-resize">⋮</div>
+              <div className="text-neutral-600 group-hover:text-neutral-400 cursor-ns-resize">
+                ⋮
+              </div>
 
               {/* Clipping Indicator */}
               {layer.clipped && (
@@ -178,13 +180,17 @@ export const LayersPanel: React.FC = () => {
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
                     onBlur={() => handleFinishRename(layer.id)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleFinishRename(layer.id)}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && handleFinishRename(layer.id)
+                    }
                     autoFocus
                     className="bg-neutral-800 border border-neutral-700 rounded px-1.5 py-0.5 text-neutral-100 w-full outline-none font-sans"
                   />
                 ) : (
                   <span
-                    onDoubleClick={() => handleStartRename(layer.id, layer.name)}
+                    onDoubleClick={() =>
+                      handleStartRename(layer.id, layer.name)
+                    }
                     className="truncate block font-medium tracking-wide"
                   >
                     {layer.name}
@@ -201,7 +207,11 @@ export const LayersPanel: React.FC = () => {
                   }}
                   className="p-1 hover:bg-neutral-800 rounded transition-colors text-neutral-500 hover:text-neutral-300"
                 >
-                  {layer.locked ? <Lock size={12} className="text-amber-500" /> : <Unlock size={12} />}
+                  {layer.locked ? (
+                    <Lock size={12} className="text-amber-500" />
+                  ) : (
+                    <Unlock size={12} />
+                  )}
                 </button>
                 <button
                   onClick={(e) => {
@@ -210,7 +220,11 @@ export const LayersPanel: React.FC = () => {
                   }}
                   className="p-1 hover:bg-neutral-800 rounded transition-colors text-neutral-500 hover:text-neutral-300"
                 >
-                  {layer.visible ? <Eye size={12} /> : <EyeOff size={12} className="text-neutral-600" />}
+                  {layer.visible ? (
+                    <Eye size={12} />
+                  ) : (
+                    <EyeOff size={12} className="text-neutral-600" />
+                  )}
                 </button>
               </div>
             </div>

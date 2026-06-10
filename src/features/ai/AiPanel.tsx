@@ -128,8 +128,8 @@ export const AiPanel: React.FC = () => {
                 onClick={() => setAiTool(t.id)}
                 className={`p-2.5 rounded border text-left flex flex-col gap-0.5 transition-all cursor-pointer ${
                   aiTool === t.id
-                    ? 'bg-blue-600/15 border-blue-500 text-neutral-100 shadow'
-                    : 'bg-neutral-950/20 border-neutral-850 hover:border-neutral-800 text-neutral-400 hover:text-neutral-300'
+                    ? 'bg-blue-600/15 border-blue-500/20 text-neutral-100 shadow'
+                    : 'bg-neutral-950/20 border-neutral-800/60 hover:border-neutral-800/90 text-neutral-400 hover:text-neutral-300'
                 }`}
               >
                 <span className="font-bold flex items-center gap-1.5">

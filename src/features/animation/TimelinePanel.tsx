@@ -188,7 +188,7 @@ export const TimelinePanel: React.FC = () => {
                 onClick={() => handleSelectFrame(idx)}
                 className={`relative w-12 aspect-square rounded flex flex-col items-center justify-center border font-mono transition-all cursor-pointer ${
                   isCurrent
-                    ? 'bg-blue-600/20 border-blue-500 text-blue-400 shadow-md'
+                    ? 'bg-blue-600/20 border-blue-500/20 text-blue-400 shadow-md'
                     : 'bg-neutral-900 border-neutral-800 text-neutral-500 hover:border-neutral-750 hover:text-neutral-400'
                 }`}
               >
