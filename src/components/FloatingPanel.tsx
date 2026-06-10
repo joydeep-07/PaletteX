@@ -16,12 +16,13 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({ panel, children })
   if (!panel.visible) return null;
 
   // Handle manual drag completion to persist coordinates
-  const handleDragEnd = (event: any, info: any) => {
-    if (panelRef.current) {
-      const rect = panelRef.current.getBoundingClientRect();
-      updatePanelPosition(panel.id, rect.left, rect.top);
-    }
-  };
+const handleDragEnd = (_event: any, info: any) => {
+  updatePanelPosition(
+    panel.id,
+    panel.x + info.offset.x,
+    panel.y + info.offset.y,
+  );
+};
 
   // Resize handler using mouse movements
   const handleResizeStart = (e: React.MouseEvent) => {
@@ -52,16 +53,23 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({ panel, children })
     document.addEventListener('mouseup', onMouseUp);
   };
 
+  
   return (
     <motion.div
       ref={panelRef}
+      drag
+      dragControls={dragControls}
+      dragListener={false}
+      dragMomentum={false}
+      dragElastic={0}
+      onDragEnd={handleDragEnd}
       initial={{ x: panel.x, y: panel.y, opacity: 0, scale: 0.95 }}
       animate={{ x: panel.x, y: panel.y, opacity: 1, scale: 1 }}
-      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      transition={{ type: "spring", damping: 25, stiffness: 200 }}
       style={{
-        position: 'absolute',
+        position: "absolute",
         width: panel.width,
-        height: panel.collapsed ? 'auto' : panel.height,
+        height: panel.collapsed ? "auto" : panel.height,
         zIndex: 50,
       }}
       className="flex flex-col rounded-lg border border-neutral-800 bg-neutral-900/90 shadow-2xl backdrop-blur-md overflow-hidden text-neutral-200 select-none"
@@ -75,13 +83,17 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({ panel, children })
         <div className="flex items-center gap-1.5 ml-4">
           <button
             onClick={() => togglePanelCollapsed(panel.id)}
-            className="p-1 hover:bg-neutral-800 rounded transition-colors text-neutral-500 hover:text-neutral-300"
+            className="p-1 hover:bg-neutral-800 rounded cursor-pointer transition-colors text-neutral-500 hover:text-neutral-300"
           >
-            {panel.collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+            {panel.collapsed ? (
+              <ChevronDown size={13} />
+            ) : (
+              <ChevronUp size={13} />
+            )}
           </button>
           <button
             onClick={() => togglePanel(panel.id)}
-            className="p-1 hover:bg-neutral-800 rounded transition-colors text-neutral-500 hover:text-red-400"
+            className="p-1 hover:bg-neutral-800 rounded cursor-pointer transition-colors text-neutral-500 hover:text-red-400"
           >
             <X size={13} />
           </button>
@@ -103,9 +115,28 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({ panel, children })
           style={{ zIndex: 100 }}
         >
           {/* Diagonal resize marks */}
-          <svg width="8" height="8" viewBox="0 0 8 8" className="text-neutral-600">
-            <line x1="6" y1="0" x2="0" y2="6" stroke="currentColor" strokeWidth="1.5" />
-            <line x1="6" y1="3" x2="3" y2="6" stroke="currentColor" strokeWidth="1.5" />
+          <svg
+            width="8"
+            height="8"
+            viewBox="0 0 8 8"
+            className="text-neutral-600"
+          >
+            <line
+              x1="6"
+              y1="0"
+              x2="0"
+              y2="6"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+            <line
+              x1="6"
+              y1="3"
+              x2="3"
+              y2="6"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
           </svg>
         </div>
       )}

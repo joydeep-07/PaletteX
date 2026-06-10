@@ -166,13 +166,13 @@ export const TopToolbar: React.FC = () => {
         {doc && (
           <>
             {/* Collaboration Connect */}
-            <button
+            {/* <button
               onClick={() => setShowCollabDialog(true)}
               className="px-2.5 py-1.5 bg-neutral-900 hover:bg-neutral-800 active:bg-neutral-850 rounded flex items-center gap-1.5 font-bold transition-colors cursor-pointer text-neutral-300"
             >
               <Users size={12} className="text-emerald-400" />
               Collab
-            </button>
+            </button> */}
 
             {/* Panel Toggles */}
             <button
