@@ -4,6 +4,9 @@ export class LayerManager {
   private canvases: Map<string, HTMLCanvasElement> = new Map();
   private contexts: Map<string, CanvasRenderingContext2D> = new Map();
   
+  // Document ID -> Array of snapshots (layerId -> snapshot canvas)
+  private historyStacks: Map<string, { [layerId: string]: HTMLCanvasElement }[]> = new Map();
+
   // Temporary compositing canvases for clipping masks and adjustment layers
   private tempCanvas1: HTMLCanvasElement | null = null;
   private tempCtx1: CanvasRenderingContext2D | null = null;
@@ -18,6 +21,53 @@ export class LayerManager {
       this.tempCtx2 = this.tempCanvas2.getContext('2d');
     }
   }
+
+  /**
+   * Saves a backup offscreen snapshot of all raster layers for a document.
+   */
+  public pushHistory(docId: string, layers: LayerMetadata[], width: number, height: number, index: number) {
+    let stack = this.historyStacks.get(docId);
+    if (!stack) {
+      stack = [];
+      this.historyStacks.set(docId, stack);
+    }
+
+    // Truncate any redo steps
+    stack.splice(index);
+
+    const snapshot: { [layerId: string]: HTMLCanvasElement } = {};
+    layers.forEach((layer) => {
+      if (layer.type === 'raster') {
+        const canvas = this.getOrCreateCanvas(layer.id, width, height);
+        const backup = document.createElement('canvas');
+        backup.width = width;
+        backup.height = height;
+        backup.getContext('2d')?.drawImage(canvas, 0, 0);
+        snapshot[layer.id] = backup;
+      }
+    });
+
+    stack.push(snapshot);
+  }
+
+  /**
+   * Restores all raster layers in a document to a specific history index.
+   */
+  public restoreHistory(docId: string, index: number, width: number, height: number) {
+    const stack = this.historyStacks.get(docId);
+    if (!stack || index < 0 || index >= stack.length) return;
+
+    const snapshot = stack[index];
+    Object.entries(snapshot).forEach(([layerId, backupCanvas]) => {
+      const canvas = this.getOrCreateCanvas(layerId, width, height);
+      const ctx = this.contexts.get(layerId);
+      if (ctx) {
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(backupCanvas, 0, 0);
+      }
+    });
+  }
+
 
   public getOrCreateCanvas(layerId: string, width: number, height: number): HTMLCanvasElement {
     let canvas = this.canvases.get(layerId);

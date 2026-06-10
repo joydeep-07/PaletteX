@@ -23,6 +23,13 @@ export const CanvasViewport: React.FC = () => {
   const [peers, setPeers] = useState<Collaborator[]>([]);
   const [stabilizedLeashPt, setStabilizedLeashPt] = useState<Point | null>(null);
 
+  // Selection/Layer move states
+  const [isMovingSelectionPixels, setIsMovingSelectionPixels] = useState(false);
+  const [moveStartCanvasPt, setMoveStartCanvasPt] = useState<Point>({ x: 0, y: 0 });
+  const [draggedPixelsCanvas, setDraggedPixelsCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [draggedPixelsOffset, setDraggedPixelsOffset] = useState<Point>({ x: 0, y: 0 });
+  const [originalSelectionPath, setOriginalSelectionPath] = useState<Point[]>([]);
+
   // Pen Tool editing states
   const [currentPenPath, setCurrentPenPath] = useState<Point[]>([]);
 
@@ -109,6 +116,13 @@ export const CanvasViewport: React.FC = () => {
         // Merge all project layers
         layerManagerInstance.composite(offCtx, doc.layers, doc.width, doc.height);
 
+        // Draw active selection pixels offset overlay if moving
+        if (isMovingSelectionPixels && draggedPixelsCanvas) {
+          offCtx.save();
+          offCtx.drawImage(draggedPixelsCanvas, draggedPixelsOffset.x, draggedPixelsOffset.y);
+          offCtx.restore();
+        }
+
         // Draw selection clipping mask overlays if active
         // If selection is active, we clip the main drawing composite
         // Apply transformation matrix to draw layers on screen
@@ -181,6 +195,14 @@ export const CanvasViewport: React.FC = () => {
     
     // Update collaboration presence cursor
     collabInstance.updateLocalCursor({ x: Math.round(canvasPt.x), y: Math.round(canvasPt.y) });
+
+    // Handle selection pixel dragging
+    if (isMovingSelectionPixels) {
+      const dx = canvasPt.x - moveStartCanvasPt.x;
+      const dy = canvasPt.y - moveStartCanvasPt.y;
+      setDraggedPixelsOffset({ x: dx, y: dy });
+      return;
+    }
 
     // Handle viewport Panning
     if (isPanning) {
@@ -267,6 +289,63 @@ export const CanvasViewport: React.FC = () => {
     const sy = e.clientY - rect.top;
     const canvasPt = engineInstance.screenToCanvas(sx, sy);
 
+    // Move tool logic: Check if moving selection pixels or moving the entire active layer
+    if (activeTool === 'move' && doc.activeLayerId) {
+      const activeLayer = doc.layers.find((l) => l.id === doc.activeLayerId);
+      if (activeLayer?.type === 'raster' && !activeLayer.locked) {
+        const layerCanvas = layerManagerInstance.getOrCreateCanvas(doc.activeLayerId, doc.width, doc.height);
+        const layerCtx = layerCanvas.getContext('2d')!;
+
+        const floatCanvas = document.createElement('canvas');
+        floatCanvas.width = doc.width;
+        floatCanvas.height = doc.height;
+        const floatCtx = floatCanvas.getContext('2d')!;
+
+        if (selection.isActive && selection.path.length > 0) {
+          // 1. Capture selected pixels onto floating overlay
+          floatCtx.save();
+          floatCtx.beginPath();
+          floatCtx.moveTo(selection.path[0].x, selection.path[0].y);
+          for (let i = 1; i < selection.path.length; i++) {
+            floatCtx.lineTo(selection.path[i].x, selection.path[i].y);
+          }
+          floatCtx.closePath();
+          floatCtx.clip();
+          floatCtx.drawImage(layerCanvas, 0, 0);
+          floatCtx.restore();
+
+          // 2. Clear selected pixels from source active layer
+          layerCtx.save();
+          layerCtx.beginPath();
+          layerCtx.moveTo(selection.path[0].x, selection.path[0].y);
+          for (let i = 1; i < selection.path.length; i++) {
+            layerCtx.lineTo(selection.path[i].x, selection.path[i].y);
+          }
+          layerCtx.closePath();
+          layerCtx.clip();
+          layerCtx.clearRect(0, 0, doc.width, doc.height);
+          layerCtx.restore();
+
+          setIsMovingSelectionPixels(true);
+          setMoveStartCanvasPt(canvasPt);
+          setDraggedPixelsCanvas(floatCanvas);
+          setDraggedPixelsOffset({ x: 0, y: 0 });
+          setOriginalSelectionPath(selection.path);
+        } else {
+          // Move the entire layer canvas content
+          floatCtx.drawImage(layerCanvas, 0, 0);
+          layerCtx.clearRect(0, 0, doc.width, doc.height);
+
+          setIsMovingSelectionPixels(true);
+          setMoveStartCanvasPt(canvasPt);
+          setDraggedPixelsCanvas(floatCanvas);
+          setDraggedPixelsOffset({ x: 0, y: 0 });
+          setOriginalSelectionPath([]); // empty denotes full layer
+        }
+        return;
+      }
+    }
+
     // Eyedropper tool
     if (activeTool === 'eyedropper') {
       const ctx = canvas.getContext('2d');
@@ -348,6 +427,34 @@ export const CanvasViewport: React.FC = () => {
   };
 
   const handlePointerUp = () => {
+    // If dragging pixels, drop them back onto the layer canvas
+    if (isMovingSelectionPixels && draggedPixelsCanvas && doc.activeLayerId) {
+      const layerCanvas = layerManagerInstance.getOrCreateCanvas(doc.activeLayerId, doc.width, doc.height);
+      const layerCtx = layerCanvas.getContext('2d')!;
+
+      layerCtx.save();
+      layerCtx.drawImage(draggedPixelsCanvas, draggedPixelsOffset.x, draggedPixelsOffset.y);
+      layerCtx.restore();
+
+      // If moving a selection, translate the selection border in the store as well
+      if (originalSelectionPath.length > 0) {
+        const shiftedPath = originalSelectionPath.map((pt) => ({
+          x: pt.x + draggedPixelsOffset.x,
+          y: pt.y + draggedPixelsOffset.y,
+        }));
+        setSelection({ path: shiftedPath, isActive: true, type: 'lasso' });
+      }
+
+      pushHistory(doc.id);
+
+      // Reset move drag state
+      setIsMovingSelectionPixels(false);
+      setDraggedPixelsCanvas(null);
+      setDraggedPixelsOffset({ x: 0, y: 0 });
+      setOriginalSelectionPath([]);
+      return;
+    }
+
     if (isPanning) {
       setIsPanning(false);
       return;

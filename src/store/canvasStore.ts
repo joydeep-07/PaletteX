@@ -4,6 +4,7 @@ import { CanvasTool, SelectionState, ViewportState } from '../types/canvas';
 import { LayerMetadata, LayerType, BlendMode, TextData } from '../types/layer';
 import { BrushPreset, BrushType, BrushDynamics, StabilizerSettings } from '../types/brush';
 import { VectorElement } from '../types/vector';
+import { layerManagerInstance } from '../canvas-engine/LayerManager';
 
 export interface CanvasDocument {
   id: string;
@@ -29,6 +30,11 @@ interface CanvasStoreState {
   brushSettings: BrushPreset;
   brushPresets: BrushPreset[];
   colorHistory: string[];
+  clipboard: {
+    imageData: ImageData;
+    width: number;
+    height: number;
+  } | null;
 }
 
 interface CanvasStoreActions {
@@ -63,12 +69,16 @@ interface CanvasStoreActions {
   updateBrushSettings: (updates: Partial<BrushPreset>) => void;
   saveBrushPreset: (preset: BrushPreset) => void;
   
+  // Clipboard
+  setClipboard: (data: CanvasStoreState['clipboard']) => void;
+
   // History Actions (state index trackers)
   pushHistory: (docId: string) => void;
   undo: (docId: string) => void;
   redo: (docId: string) => void;
   resetHistoryIndex: (docId: string, index: number, length: number) => void;
 }
+
 
 const DEFAULT_BRUSH_PRESETS: BrushPreset[] = [
   {
@@ -205,6 +215,7 @@ export const useCanvasStore = create<CanvasStoreState & CanvasStoreActions>()(
     brushSettings: DEFAULT_BRUSH_PRESETS[0],
     brushPresets: DEFAULT_BRUSH_PRESETS,
     colorHistory: ['#3b82f6', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6', '#ec4899', '#ffffff', '#000000'],
+    clipboard: null,
 
     addDocument: (name, width, height) => {
       const id = 'doc_' + Math.random().toString(36).substring(2, 9);
@@ -238,6 +249,9 @@ export const useCanvasStore = create<CanvasStoreState & CanvasStoreActions>()(
       set((state) => {
         state.documents.push(newDoc);
         state.activeDocumentId = id;
+        
+        // Push initial blank state snapshot
+        layerManagerInstance.pushHistory(id, newDoc.layers, width, height, 0);
       });
       return id;
     },
@@ -497,12 +511,21 @@ export const useCanvasStore = create<CanvasStoreState & CanvasStoreActions>()(
       });
     },
 
+    setClipboard: (data) => {
+      set((state) => {
+        state.clipboard = data;
+      });
+    },
+
     pushHistory: (docId) => {
       set((state) => {
         const doc = state.documents.find((d) => d.id === docId);
         if (doc) {
           doc.historyIndex++;
           doc.historyLength = doc.historyIndex + 1;
+          
+          // Capture and save current layer states
+          layerManagerInstance.pushHistory(docId, doc.layers, doc.width, doc.height, doc.historyIndex);
         }
       });
     },
@@ -512,6 +535,9 @@ export const useCanvasStore = create<CanvasStoreState & CanvasStoreActions>()(
         const doc = state.documents.find((d) => d.id === docId);
         if (doc && doc.historyIndex > 0) {
           doc.historyIndex--;
+          
+          // Restore layer canvases to previous index
+          layerManagerInstance.restoreHistory(docId, doc.historyIndex, doc.width, doc.height);
         }
       });
     },
@@ -521,6 +547,9 @@ export const useCanvasStore = create<CanvasStoreState & CanvasStoreActions>()(
         const doc = state.documents.find((d) => d.id === docId);
         if (doc && doc.historyIndex < doc.historyLength - 1) {
           doc.historyIndex++;
+          
+          // Restore layer canvases to next index
+          layerManagerInstance.restoreHistory(docId, doc.historyIndex, doc.width, doc.height);
         }
       });
     },
