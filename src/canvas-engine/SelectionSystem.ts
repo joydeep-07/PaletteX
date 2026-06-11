@@ -6,11 +6,7 @@ export class SelectionSystem {
   private animFrameId: number | null = null;
 
   constructor() {}
-
-  /**
-   * Performs a flood fill (Magic Wand) on ImageData from a clicked coordinate.
-   * Returns a 1D alpha mask (Uint8ClampedArray of size width * height).
-   */
+  
   public floodFill(
     imageData: ImageData,
     startX: number,
