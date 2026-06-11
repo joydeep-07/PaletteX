@@ -1,7 +1,11 @@
 export type ShapeType =
+  | 'line'
   | 'rectangle'
+  | 'square'
   | 'circle'
   | 'ellipse'
+  | 'triangle'
+  | 'rhombus'
   | 'polygon'
   | 'star'
   | 'arrow';

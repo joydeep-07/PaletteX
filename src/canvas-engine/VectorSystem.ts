@@ -59,14 +59,52 @@ export class VectorSystem {
   }
 
   /**
+   * Builds a VectorShape from a drag start/end pair, applying shape-specific constraints.
+   */
+  public shapeFromDrag(
+    type: VectorShape['type'],
+    start: Point,
+    end: Point,
+    stroke: string,
+    strokeWidth: number,
+    fill: string | null
+  ): VectorShape {
+    let x = start.x;
+    let y = start.y;
+    let width = end.x - start.x;
+    let height = end.y - start.y;
+
+    if (type === 'square' || type === 'circle') {
+      const size = Math.max(Math.abs(width), Math.abs(height));
+      width = width < 0 ? -size : size;
+      height = height < 0 ? -size : size;
+    }
+
+    return {
+      id: 'shape_' + Math.random().toString(36).substring(2, 9),
+      type: type === 'square' ? 'rectangle' : type,
+      x,
+      y,
+      width,
+      height,
+      stroke,
+      strokeWidth,
+      fill,
+    };
+  }
+
+  /**
    * Draws vector shapes like polygon, stars, arrows, rounded rects.
    */
-  private drawShape(ctx: CanvasRenderingContext2D, shape: VectorShape) {
+  public drawShape(ctx: CanvasRenderingContext2D, shape: VectorShape) {
     const { x, y, width, height, stroke, strokeWidth, fill, type, points, cornerRadius } = shape;
     
     ctx.beginPath();
     
-    if (type === 'rectangle') {
+    if (type === 'line') {
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + width, y + height);
+    } else if (type === 'rectangle') {
       const radius = cornerRadius || 0;
       if (radius > 0) {
         ctx.roundRect(x, y, width, height, radius);
@@ -74,9 +112,34 @@ export class VectorSystem {
         ctx.rect(x, y, width, height);
       }
     } else if (type === 'circle' || type === 'ellipse') {
-      const rx = Math.abs(width / 2);
-      const ry = Math.abs(height / 2);
-      ctx.ellipse(x + rx, y + ry, rx, ry, 0, 0, Math.PI * 2);
+      const left = Math.min(x, x + width);
+      const top = Math.min(y, y + height);
+      const w = Math.abs(width);
+      const h = Math.abs(height);
+      const rx = w / 2;
+      const ry = type === 'circle' ? rx : h / 2;
+      ctx.ellipse(left + rx, top + ry, rx, ry, 0, 0, Math.PI * 2);
+    } else if (type === 'triangle') {
+      const left = Math.min(x, x + width);
+      const right = Math.max(x, x + width);
+      const top = Math.min(y, y + height);
+      const bottom = Math.max(y, y + height);
+      ctx.moveTo((left + right) / 2, top);
+      ctx.lineTo(right, bottom);
+      ctx.lineTo(left, bottom);
+      ctx.closePath();
+    } else if (type === 'rhombus') {
+      const left = Math.min(x, x + width);
+      const right = Math.max(x, x + width);
+      const top = Math.min(y, y + height);
+      const bottom = Math.max(y, y + height);
+      const cx = (left + right) / 2;
+      const cy = (top + bottom) / 2;
+      ctx.moveTo(cx, top);
+      ctx.lineTo(right, cy);
+      ctx.lineTo(cx, bottom);
+      ctx.lineTo(left, cy);
+      ctx.closePath();
     } else if (type === 'polygon') {
       const numPts = points || 5;
       const rx = width / 2;
@@ -133,12 +196,14 @@ export class VectorSystem {
       ctx.closePath();
     }
 
-    if (fill) {
+    if (fill && type !== 'line') {
       ctx.fillStyle = fill;
       ctx.fill();
     }
     ctx.strokeStyle = stroke;
     ctx.lineWidth = strokeWidth;
+    ctx.lineCap = type === 'line' ? 'round' : 'butt';
+    ctx.lineJoin = 'round';
     ctx.stroke();
   }
 

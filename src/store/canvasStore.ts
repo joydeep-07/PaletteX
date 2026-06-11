@@ -3,7 +3,7 @@ import { immer } from 'zustand/middleware/immer';
 import { CanvasTool, SelectionState, ViewportState } from '../types/canvas';
 import { LayerMetadata, LayerType, BlendMode, TextData } from '../types/layer';
 import { BrushPreset, BrushType, BrushDynamics, StabilizerSettings } from '../types/brush';
-import { VectorElement } from '../types/vector';
+import { VectorElement, ShapeType } from '../types/vector';
 import { layerManagerInstance } from '../canvas-engine/LayerManager';
 
 export interface CanvasDocument {
@@ -22,6 +22,7 @@ interface CanvasStoreState {
   documents: CanvasDocument[];
   activeDocumentId: string | null;
   activeTool: CanvasTool;
+  activeShapeType: ShapeType;
   color: {
     primary: string;
     secondary: string;
@@ -42,6 +43,7 @@ interface CanvasStoreActions {
   closeDocument: (id: string) => void;
   setActiveDocument: (id: string) => void;
   setActiveTool: (tool: CanvasTool) => void;
+  setActiveShapeType: (shape: ShapeType) => void;
   
   // Layers
   addLayer: (docId: string, type: LayerType, name?: string) => string;
@@ -202,6 +204,7 @@ export const useCanvasStore = create<CanvasStoreState & CanvasStoreActions>()(
     documents: [],
     activeDocumentId: null,
     activeTool: 'brush',
+    activeShapeType: 'rectangle',
     color: {
       primary: '#3b82f6', // Premium Blue
       secondary: '#ffffff',
@@ -278,11 +281,16 @@ export const useCanvasStore = create<CanvasStoreState & CanvasStoreActions>()(
       set((state) => {
         state.activeTool = tool;
         if (tool === 'eraser') {
-          // Temporarily match tool configurations or apply eraser type
           state.brushSettings.type = 'eraser';
         } else if (state.brushSettings.type === 'eraser' && tool === 'brush') {
           state.brushSettings.type = 'pencil';
         }
+      });
+    },
+
+    setActiveShapeType: (shape) => {
+      set((state) => {
+        state.activeShapeType = shape;
       });
     },
 
