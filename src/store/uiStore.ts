@@ -19,6 +19,7 @@ interface UiStoreState {
   viewport: ViewportState;
   cursorCoordinates: { x: number; y: number };
   fps: number;
+  isSpaceHeld: boolean;
   leftSidebarCollapsed: boolean;
   rightSidebarCollapsed: boolean;
   activeRightTab: 'layers' | 'colors' | 'brushes' | 'properties' | 'history' | 'ai';
@@ -30,6 +31,7 @@ interface UiStoreActions {
   resetViewport: () => void;
   setCursorCoordinates: (x: number, y: number) => void;
   setFps: (fps: number) => void;
+  setSpaceHeld: (held: boolean) => void;
   toggleLeftSidebar: () => void;
   toggleRightSidebar: () => void;
   setActiveRightTab: (tab: 'layers' | 'colors' | 'brushes' | 'properties' | 'history' | 'ai') => void;
@@ -51,6 +53,7 @@ export const useUiStore = create<UiStoreState & UiStoreActions>()(
     },
     cursorCoordinates: { x: 0, y: 0 },
     fps: 60,
+    isSpaceHeld: false,
     leftSidebarCollapsed: false,
     rightSidebarCollapsed: false,
     activeRightTab: 'layers',
@@ -149,6 +152,12 @@ export const useUiStore = create<UiStoreState & UiStoreActions>()(
     setFps: (fps) => {
       set((state) => {
         state.fps = fps;
+      });
+    },
+
+    setSpaceHeld: (held) => {
+      set((state) => {
+        state.isSpaceHeld = held;
       });
     },
 

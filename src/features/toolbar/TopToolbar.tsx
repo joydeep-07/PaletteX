@@ -1,18 +1,13 @@
 import React, { useState } from 'react';
 import { useCanvasStore } from '../../store/canvasStore';
 import { useUiStore } from '../../store/uiStore';
-import { layerManagerInstance } from '../../canvas-engine/LayerManager';
-import { saveProjectToDb } from '../../services/db';
-import { collabInstance } from '../../services/collaboration';
-import { Undo2, Redo2, Plus, Download, Users, Sliders, Play, Settings, Sparkles, Folder, Palette, Paintbrush, Layers } from 'lucide-react';
+import { exportDocumentAsPng } from '../../services/exportService';
+import { Undo2, Redo2, Plus, Download, Play, Sparkles, Folder, Palette, Paintbrush, Layers } from 'lucide-react';
 
 export const TopToolbar: React.FC = () => {
-  const { documents, activeDocumentId, addDocument, closeDocument, setActiveDocument, undo, redo, clearSelection, color } = useCanvasStore();
-  const { viewport, setViewport, resetViewport, togglePanel, floatingPanels } = useUiStore();
+  const { documents, activeDocumentId, addDocument, closeDocument, setActiveDocument, undo, redo } = useCanvasStore();
+  const { setViewport, resetViewport, togglePanel, floatingPanels } = useUiStore();
 
-  const [activeMenu, setActiveMenu] = useState<string | null>(null);
-  const [collabRoom, setCollabRoom] = useState<string>('');
-  const [showCollabDialog, setShowCollabDialog] = useState(false);
   const [showNewDocDialog, setShowNewDocDialog] = useState(false);
   const [docName, setDocName] = useState('Untitled Artwork');
   const [docWidth, setDocWidth] = useState(1920);
@@ -22,38 +17,15 @@ export const TopToolbar: React.FC = () => {
 
   const isPanelVisible = (id: string) => floatingPanels.find((p) => p.id === id)?.visible ?? false;
 
-  // File Exporter
-  const handleExport = (format: 'png' | 'jpeg') => {
+  const handleExportPng = () => {
     if (!doc) return;
-    
-    // Create viewport size canvas
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = doc.width;
-    exportCanvas.height = doc.height;
-    const ctx = exportCanvas.getContext('2d')!;
-
-    // Composite all layers onto exporter canvas
-    layerManagerInstance.composite(ctx, doc.layers, doc.width, doc.height);
-
-    const dataUrl = exportCanvas.toDataURL(`image/${format}`);
-    const link = document.createElement('a');
-    link.download = `${doc.name || 'artwork'}.${format}`;
-    link.href = dataUrl;
-    link.click();
+    exportDocumentAsPng(doc, true);
   };
 
   const handleCreateDocument = (e: React.FormEvent) => {
     e.preventDefault();
-    const id = addDocument(docName, docWidth, docHeight);
+    addDocument(docName, docWidth, docHeight);
     setShowNewDocDialog(false);
-  };
-
-  const handleConnectCollab = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (collabRoom.trim()) {
-      collabInstance.connect(collabRoom.trim());
-      setShowCollabDialog(false);
-    }
   };
 
   return (
@@ -93,7 +65,7 @@ export const TopToolbar: React.FC = () => {
                 onClick={() => redo(doc.id)}
                 disabled={doc.historyIndex >= doc.historyLength - 1}
                 className="p-1.5 hover:bg-neutral-900 rounded disabled:opacity-30 transition-colors cursor-pointer"
-                title="Redo (Ctrl+Shift+Z)"
+                title="Redo (Ctrl+Shift+Z / Ctrl+Y)"
               >
                 <Redo2 size={13} />
               </button>
@@ -121,8 +93,9 @@ export const TopToolbar: React.FC = () => {
               {/* Exports */}
               <div className="h-4 w-px bg-neutral-800 mx-1.5" />
               <button
-                onClick={() => handleExport('png')}
+                onClick={handleExportPng}
                 className="px-2.5 py-1.5 hover:bg-neutral-900 rounded text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium transition-colors cursor-pointer"
+                title="Export PNG with white background"
               >
                 <Download size={12} />
                 Export PNG
@@ -167,16 +140,6 @@ export const TopToolbar: React.FC = () => {
       <div className="flex items-center gap-2.5">
         {doc && (
           <>
-            {/* Collaboration Connect */}
-            {/* <button
-              onClick={() => setShowCollabDialog(true)}
-              className="px-2.5 py-1.5 bg-neutral-900 hover:bg-neutral-800 active:bg-neutral-850 rounded flex items-center gap-1.5 font-bold transition-colors cursor-pointer text-neutral-300"
-            >
-              <Users size={12} className="text-emerald-400" />
-              Collab
-            </button> */}
-
-            {/* Panel Toggles — one button per floating panel */}
             <div className="h-4 w-px bg-neutral-800 mx-1" />
             <button
               onClick={() => togglePanel('color-picker-panel')}
@@ -237,7 +200,6 @@ export const TopToolbar: React.FC = () => {
         )}
       </div>
 
-      {/* --- Dialogue Modals --- */}
       {/* New Project Dialog */}
       {showNewDocDialog && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] animate-fade-in">
@@ -297,49 +259,6 @@ export const TopToolbar: React.FC = () => {
                 className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold cursor-pointer"
               >
                 Create
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Collaboration Dialog */}
-      {showCollabDialog && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] animate-fade-in">
-          <form
-            onSubmit={handleConnectCollab}
-            className="bg-neutral-900 border border-neutral-800 rounded-lg p-5 w-80 text-neutral-200 shadow-2xl flex flex-col gap-4"
-          >
-            <h3 className="font-bold text-sm text-neutral-100 flex items-center gap-1.5">
-              <Users size={14} className="text-emerald-500" />
-              Connect to Team Workspace
-            </h3>
-
-            <div className="flex flex-col gap-1">
-              <span className="text-neutral-500 text-[10px] uppercase font-semibold">Workspace Room ID</span>
-              <input
-                type="text"
-                value={collabRoom}
-                onChange={(e) => setCollabRoom(e.target.value)}
-                placeholder="e.g. sketching-session-1"
-                className="bg-neutral-950 border border-neutral-850 rounded p-2 text-neutral-200 outline-none focus:border-blue-500"
-                required
-              />
-            </div>
-
-            <div className="flex gap-2.5 mt-2">
-              <button
-                type="button"
-                onClick={() => setShowCollabDialog(false)}
-                className="flex-1 py-2 bg-neutral-950 hover:bg-neutral-800 rounded text-neutral-400 font-semibold cursor-pointer border border-neutral-850/50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-white font-semibold cursor-pointer"
-              >
-                Connect
               </button>
             </div>
           </form>

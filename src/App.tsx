@@ -1,9 +1,16 @@
 import React, { useEffect } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { useCanvasStore } from './store/canvasStore';
+import { useUiStore } from './store/uiStore';
 import { AppLayout } from './app/AppLayout';
 import { layerManagerInstance } from './canvas-engine/LayerManager';
 import { saveProjectToDb } from './services/db';
+import {
+  copySelectionToClipboard,
+  cutSelectionToClipboard,
+  pasteFromClipboard,
+  deleteSelectionPixels,
+} from './services/clipboardService';
 
 export const App: React.FC = () => {
   const {
@@ -14,6 +21,8 @@ export const App: React.FC = () => {
     redo,
     clearSelection,
   } = useCanvasStore();
+
+  const { setSpaceHeld } = useUiStore();
 
   const doc = documents.find((d) => d.id === activeDocumentId);
 
@@ -34,25 +43,63 @@ export const App: React.FC = () => {
     const { brushSettings, updateBrushSettings } = useCanvasStore.getState();
     updateBrushSettings({ size: Math.min(300, brushSettings.size + 4) });
   });
-  useHotkeys('space', (e) => {
-    e.preventDefault();
-    setActiveTool('hand');
-  });
+
+  // Space = temporary pan (hold to pan, release to restore)
+  useHotkeys(
+    'space',
+    (e) => {
+      e.preventDefault();
+      setSpaceHeld(true);
+    },
+    { keydown: true },
+    [setSpaceHeld]
+  );
+  useHotkeys(
+    'space',
+    () => setSpaceHeld(false),
+    { keyup: true },
+    [setSpaceHeld]
+  );
 
   // Undo / Redo
   useHotkeys('meta+z, ctrl+z', (e) => {
     e.preventDefault();
     if (doc) undo(doc.id);
   });
-  useHotkeys('meta+shift+z, ctrl+shift+z', (e) => {
+  useHotkeys('meta+shift+z, ctrl+shift+z, meta+y, ctrl+y', (e) => {
     e.preventDefault();
     if (doc) redo(doc.id);
   });
 
-  // Clear Selection
+  // Deselect
+  useHotkeys('escape', () => clearSelection());
   useHotkeys('meta+d, ctrl+d', (e) => {
     e.preventDefault();
     clearSelection();
+  });
+
+  // Clipboard
+  useHotkeys('meta+c, ctrl+c', (e) => {
+    e.preventDefault();
+    copySelectionToClipboard();
+  });
+  useHotkeys('meta+x, ctrl+x', (e) => {
+    e.preventDefault();
+    cutSelectionToClipboard();
+  });
+  useHotkeys('meta+v, ctrl+v', (e) => {
+    e.preventDefault();
+    pasteFromClipboard();
+  });
+  useHotkeys('delete, backspace', (e) => {
+    if (
+      e.target instanceof HTMLInputElement ||
+      e.target instanceof HTMLTextAreaElement
+    ) {
+      return;
+    }
+    e.preventDefault();
+    deleteSelectionPixels();
   });
 
   // Save project (IndexedDB / Dexie)

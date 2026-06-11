@@ -194,6 +194,7 @@ const DEFAULT_BRUSH_PRESETS: BrushPreset[] = [
       scatter: 0,
       spacing: 0.05,
       hardness: 0.85,
+      
     },
     stabilizer: { type: 'none', value: 0, ropeLength: 0 },
   }

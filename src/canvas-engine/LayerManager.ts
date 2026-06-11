@@ -12,6 +12,8 @@ export class LayerManager {
   private tempCtx1: CanvasRenderingContext2D | null = null;
   private tempCanvas2: HTMLCanvasElement | null = null;
   private tempCtx2: CanvasRenderingContext2D | null = null;
+  private compositeBuffer: HTMLCanvasElement | null = null;
+  private compositeBufferCtx: CanvasRenderingContext2D | null = null;
 
   constructor() {
     if (typeof document !== 'undefined') {
@@ -19,7 +21,24 @@ export class LayerManager {
       this.tempCtx1 = this.tempCanvas1.getContext('2d');
       this.tempCanvas2 = document.createElement('canvas');
       this.tempCtx2 = this.tempCanvas2.getContext('2d');
+      this.compositeBuffer = document.createElement('canvas');
+      this.compositeBufferCtx = this.compositeBuffer.getContext('2d');
     }
+  }
+
+  /**
+   * Returns a reusable offscreen canvas for viewport compositing (checkerboard + layers).
+   */
+  public getCompositeBuffer(width: number, height: number): HTMLCanvasElement {
+    if (!this.compositeBuffer || !this.compositeBufferCtx) {
+      this.compositeBuffer = document.createElement('canvas');
+      this.compositeBufferCtx = this.compositeBuffer.getContext('2d');
+    }
+    if (this.compositeBuffer.width !== width || this.compositeBuffer.height !== height) {
+      this.compositeBuffer.width = width;
+      this.compositeBuffer.height = height;
+    }
+    return this.compositeBuffer;
   }
 
   /**

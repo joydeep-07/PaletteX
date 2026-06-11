@@ -6,20 +6,33 @@ import { brushEngineInstance } from '../../canvas-engine/BrushEngine';
 import { layerManagerInstance } from '../../canvas-engine/LayerManager';
 import { selectionSystemInstance } from '../../canvas-engine/SelectionSystem';
 import { vectorSystemInstance } from '../../canvas-engine/VectorSystem';
-import { collabInstance, Collaborator } from '../../services/collaboration';
 import { Point } from '../../types/vector';
 import { ViewportState } from '../../types/canvas';
 
 export const CanvasViewport: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const compositeCanvasRef = useRef<HTMLCanvasElement>(null);
-  const activeStrokeCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  const { documents, activeDocumentId, activeTool, activeShapeType, color, brushSettings, selection, setSelection, setPrimaryColor, addVectorElement, pushHistory, addToColorHistory } = useCanvasStore();
-  const { viewport, setViewport, setCursorCoordinates, setFps } = useUiStore();
+  const {
+    documents,
+    activeDocumentId,
+    activeTool,
+    activeShapeType,
+    color,
+    brushSettings,
+    selection,
+    setSelection,
+    setPrimaryColor,
+    addVectorElement,
+    pushHistory,
+    addToColorHistory,
+  } = useCanvasStore();
+  const { viewport, setViewport, setCursorCoordinates, setFps, isSpaceHeld } = useUiStore();
 
   const viewportStateRef = useRef(viewport);
   viewportStateRef.current = viewport;
+  const isSpaceHeldRef = useRef(isSpaceHeld);
+  isSpaceHeldRef.current = isSpaceHeld;
 
   const activePointersRef = useRef(new Map<number, Point>());
   const pinchGestureRef = useRef<{ startDistance: number; startZoom: number } | null>(null);
@@ -28,20 +41,16 @@ export const CanvasViewport: React.FC = () => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
-  const [peers, setPeers] = useState<Collaborator[]>([]);
   const [stabilizedLeashPt, setStabilizedLeashPt] = useState<Point | null>(null);
+  const [cursorScreenPos, setCursorScreenPos] = useState<Point | null>(null);
 
-  // Selection/Layer move states
   const [isMovingSelectionPixels, setIsMovingSelectionPixels] = useState(false);
   const [moveStartCanvasPt, setMoveStartCanvasPt] = useState<Point>({ x: 0, y: 0 });
   const [draggedPixelsCanvas, setDraggedPixelsCanvas] = useState<HTMLCanvasElement | null>(null);
   const [draggedPixelsOffset, setDraggedPixelsOffset] = useState<Point>({ x: 0, y: 0 });
   const [originalSelectionPath, setOriginalSelectionPath] = useState<Point[]>([]);
 
-  // Pen Tool editing states
   const [currentPenPath, setCurrentPenPath] = useState<Point[]>([]);
-
-  // Shape tool drag preview
   const [shapeDrag, setShapeDrag] = useState<{ start: Point; end: Point } | null>(null);
 
   const doc = documents.find((d) => d.id === activeDocumentId);
@@ -52,6 +61,30 @@ export const CanvasViewport: React.FC = () => {
     const rect = canvas.getBoundingClientRect();
     return { x: clientX - rect.left, y: clientY - rect.top };
   }, []);
+
+  const zoomAtScreenPoint = useCallback(
+    (screenX: number, screenY: number, zoomFactor: number) => {
+      setViewport((prev: ViewportState) => {
+        engineInstance.updateViewport(prev);
+        const canvasPt = engineInstance.screenToCanvas(screenX, screenY);
+        const newZoom = Math.min(64, Math.max(0.01, prev.zoom * zoomFactor));
+        engineInstance.updateViewport({ ...prev, zoom: newZoom });
+        const screenAfter = engineInstance.canvasToScreen(canvasPt.x, canvasPt.y);
+        return {
+          zoom: newZoom,
+          x: prev.x + (screenX - screenAfter.x),
+          y: prev.y + (screenY - screenAfter.y),
+        };
+      });
+    },
+    [setViewport]
+  );
+
+  const shouldPan = useCallback(
+    (tool: typeof activeTool, button: number, spaceHeld: boolean) =>
+      tool === 'hand' || button === 1 || spaceHeld,
+    []
+  );
 
   const finalizeSelectionMove = useCallback(() => {
     if (!isMovingSelectionPixels || !draggedPixelsCanvas || !doc?.activeLayerId) return;
@@ -76,7 +109,15 @@ export const CanvasViewport: React.FC = () => {
     setDraggedPixelsCanvas(null);
     setDraggedPixelsOffset({ x: 0, y: 0 });
     setOriginalSelectionPath([]);
-  }, [isMovingSelectionPixels, draggedPixelsCanvas, draggedPixelsOffset, originalSelectionPath, doc, setSelection, pushHistory]);
+  }, [
+    isMovingSelectionPixels,
+    draggedPixelsCanvas,
+    draggedPixelsOffset,
+    originalSelectionPath,
+    doc,
+    setSelection,
+    pushHistory,
+  ]);
 
   const cancelDrawingGestures = useCallback(() => {
     if (isDrawing) {
@@ -142,44 +183,45 @@ export const CanvasViewport: React.FC = () => {
     }
   }, []);
 
-  // Subscribe to multiplayer collaboration presence
+  // Trackpad / mouse wheel: pinch-zoom (ctrl+wheel) and two-finger pan
   useEffect(() => {
-    const unsub = collabInstance.onPeersChange((peerList) => {
-      setPeers(peerList);
-    });
-    
-    // Sync remote draw triggers
-    const unsubDraw = collabInstance.onRemoteDraw((layerId, drawData) => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onWheel = (e: WheelEvent) => {
       if (!doc) return;
-      const targetLayer = layerId === 'active' ? doc.activeLayerId : layerId;
-      if (!targetLayer) return;
 
-      const ctx = layerManagerInstance.getContext(targetLayer);
-      if (ctx) {
-        ctx.fillStyle = drawData.color;
-        brushEngineInstance.drawStroke(
-          ctx,
-          { x: drawData.x - 2, y: drawData.y - 2 },
-          { x: drawData.x, y: drawData.y },
-          { ...brushSettings, size: drawData.size, type: 'pencil' }
-        );
+      const rect = container.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const factor = Math.exp(-e.deltaY * 0.002);
+        zoomAtScreenPoint(sx, sy, factor);
+        return;
       }
-    });
 
-    return () => {
-      unsub();
-      unsubDraw();
+      if (Math.abs(e.deltaX) > 0 || Math.abs(e.deltaY) > 0) {
+        e.preventDefault();
+        setViewport((prev) => ({
+          x: prev.x - e.deltaX,
+          y: prev.y - e.deltaY,
+        }));
+      }
     };
-  }, [doc, brushSettings]);
 
-  // Framerate calculation & Main Compositing loop
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => container.removeEventListener('wheel', onWheel);
+  }, [doc, setViewport, zoomAtScreenPoint]);
+
+  // Main compositing loop
   useEffect(() => {
     let animationFrameId: number;
     let lastTime = performance.now();
     let frameCount = 0;
 
     const renderLoop = (time: number) => {
-      // Calculate FPS
       frameCount++;
       if (time > lastTime + 1000) {
         setFps(Math.round((frameCount * 1000) / (time - lastTime)));
@@ -191,8 +233,10 @@ export const CanvasViewport: React.FC = () => {
       const ctx = canvas?.getContext('2d');
 
       if (canvas && ctx && doc) {
-        // Adjust Canvas drawing buffer size
-        if (canvas.width !== containerRef.current?.clientWidth || canvas.height !== containerRef.current?.clientHeight) {
+        if (
+          canvas.width !== containerRef.current?.clientWidth ||
+          canvas.height !== containerRef.current?.clientHeight
+        ) {
           canvas.width = containerRef.current?.clientWidth || 800;
           canvas.height = containerRef.current?.clientHeight || 600;
         }
@@ -204,51 +248,34 @@ export const CanvasViewport: React.FC = () => {
 
         const matrix = engineInstance.getTransformMatrix();
 
-        // 1. Draw backing canvas boundary shadow
         engineInstance.drawCanvasShadow(ctx, matrix);
-
-        // 2. Composite drawing layers onto a temp buffer, then paint it inside viewport coordinates
-        // We use an offscreen canvas composite process managed by LayerManager
         layerManagerInstance.resizeLayers(doc.width, doc.height);
-        
-        // Grab main composite drawing context
-        const offscreenCanvas = document.createElement('canvas');
-        offscreenCanvas.width = doc.width;
-        offscreenCanvas.height = doc.height;
+
+        const offscreenCanvas = layerManagerInstance.getCompositeBuffer(doc.width, doc.height);
         const offCtx = offscreenCanvas.getContext('2d')!;
 
-        // Fill background checkerboard
         engineInstance.drawCheckerboard(offCtx, new DOMMatrix());
-
-        // Merge all project layers
         layerManagerInstance.composite(offCtx, doc.layers, doc.width, doc.height);
 
-        // Draw active selection pixels offset overlay if moving
         if (isMovingSelectionPixels && draggedPixelsCanvas) {
           offCtx.save();
           offCtx.drawImage(draggedPixelsCanvas, draggedPixelsOffset.x, draggedPixelsOffset.y);
           offCtx.restore();
         }
 
-        // Draw selection clipping mask overlays if active
-        // If selection is active, we clip the main drawing composite
-        // Apply transformation matrix to draw layers on screen
         ctx.save();
         ctx.setTransform(matrix);
         ctx.drawImage(offscreenCanvas, 0, 0);
         ctx.restore();
 
-        // 3. Render grid on top (zoomed in grid helper)
         engineInstance.drawGrid(ctx, matrix);
 
-        // 4. Draw vector shapes
         ctx.save();
         ctx.setTransform(matrix);
         doc.vectorElements.forEach((el) => {
           vectorSystemInstance.drawElement(ctx, el);
         });
 
-        // Draw in-progress shape preview
         if (activeTool === 'shape' && shapeDrag) {
           const previewShape = vectorSystemInstance.shapeFromDrag(
             activeShapeType,
@@ -262,17 +289,15 @@ export const CanvasViewport: React.FC = () => {
         }
         ctx.restore();
 
-        // 5. Draw Selection Marquee dashed marching ants
         selectionSystemInstance.drawMarquee(ctx, selection, matrix);
 
-        // 6. Draw stabilizer leash line (if rope is pulling)
         if (activeTool === 'brush' && stabilizedLeashPt) {
           const rawScreen = engineInstance.canvasToScreen(stabilizedLeashPt.x, stabilizedLeashPt.y);
           const lazyScreen = engineInstance.canvasToScreen(
             brushEngineInstance.stabilizePointer(stabilizedLeashPt, brushSettings.stabilizer).pt.x,
             brushEngineInstance.stabilizePointer(stabilizedLeashPt, brushSettings.stabilizer).pt.y
           );
-          ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)'; // stabilized leash line
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.moveTo(rawScreen.x, rawScreen.y);
@@ -286,39 +311,72 @@ export const CanvasViewport: React.FC = () => {
 
     animationFrameId = requestAnimationFrame(renderLoop);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [doc, viewport, selection, activeTool, activeShapeType, shapeDrag, color.primary, stabilizedLeashPt, brushSettings, isMovingSelectionPixels, draggedPixelsCanvas, draggedPixelsOffset]);
+  }, [
+    doc,
+    viewport,
+    selection,
+    activeTool,
+    activeShapeType,
+    shapeDrag,
+    color.primary,
+    stabilizedLeashPt,
+    brushSettings,
+    isMovingSelectionPixels,
+    draggedPixelsCanvas,
+    draggedPixelsOffset,
+    setFps,
+  ]);
+
+  const eraserScreenSize = brushSettings.size * viewport.zoom;
+
+  const canvasCursorClass =
+    activeTool === 'eraser'
+      ? 'cursor-none'
+      : isSpaceHeld || activeTool === 'hand'
+        ? 'cursor-grab'
+        : isPanning
+          ? 'cursor-grabbing'
+          : 'cursor-crosshair';
 
   if (!doc) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-neutral-950 text-neutral-500 font-sans p-8 select-none">
         <div className="w-16 h-16 rounded-full border border-dashed border-neutral-800 flex items-center justify-center mb-4">
-          <svg className="w-8 h-8 opacity-45 animate-pulse text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          <svg
+            className="w-8 h-8 opacity-45 animate-pulse text-blue-500"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.5}
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+            />
           </svg>
         </div>
         <h2 className="text-sm font-semibold text-neutral-350 tracking-wider">PaletteX Creative Suite</h2>
-        <p className="text-xs text-neutral-600 mt-1.5 max-w-xs text-center">To begin sketching or editing vector files, go to File &gt; New Document in the top toolbar.</p>
+        <p className="text-xs text-neutral-600 mt-1.5 max-w-xs text-center">
+          To begin sketching or editing vector files, go to File &gt; New Document in the top toolbar.
+        </p>
       </div>
     );
   }
 
-  // Handle pointer coordinate readouts
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (isPinchingRef.current) return;
 
     const canvas = compositeCanvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
+    const sx = e.clientX - canvas.getBoundingClientRect().left;
+    const sy = e.clientY - canvas.getBoundingClientRect().top;
+
+    setCursorScreenPos({ x: sx, y: sy });
 
     const canvasPt = engineInstance.screenToCanvas(sx, sy);
     setCursorCoordinates(Math.round(canvasPt.x), Math.round(canvasPt.y));
-    
-    // Update collaboration presence cursor
-    collabInstance.updateLocalCursor({ x: Math.round(canvasPt.x), y: Math.round(canvasPt.y) });
 
-    // Handle selection pixel dragging
     if (isMovingSelectionPixels) {
       const dx = canvasPt.x - moveStartCanvasPt.x;
       const dy = canvasPt.y - moveStartCanvasPt.y;
@@ -326,7 +384,6 @@ export const CanvasViewport: React.FC = () => {
       return;
     }
 
-    // Handle viewport Panning
     if (isPanning) {
       const dx = sx - panStart.x;
       const dy = sy - panStart.y;
@@ -338,23 +395,17 @@ export const CanvasViewport: React.FC = () => {
       return;
     }
 
-    // Handle Brush stroke drawing
-    if (isDrawing && doc.activeLayerId && !doc.layers.find(l => l.id === doc.activeLayerId)?.locked) {
+    if (isDrawing && doc.activeLayerId && !doc.layers.find((l) => l.id === doc.activeLayerId)?.locked) {
       const activeLayer = doc.layers.find((l) => l.id === doc.activeLayerId);
       if (activeLayer?.type !== 'raster') return;
 
       const layerCtx = layerManagerInstance.getContext(doc.activeLayerId);
       if (layerCtx) {
-        // Apply pressure settings
         const pressure = e.pressure !== 0 ? e.pressure : 0.5;
-
-        // Pointer Speed calculation
         const speed = Math.hypot(e.movementX, e.movementY);
-
-        // Run point through stabilizer
         const isFirst = brushEngineInstance['lastPoint'] === null;
         const stabilized = brushEngineInstance.stabilizePointer(canvasPt, brushSettings.stabilizer, isFirst);
-        
+
         if (brushSettings.stabilizer.type === 'rope') {
           setStabilizedLeashPt(canvasPt);
         }
@@ -363,8 +414,6 @@ export const CanvasViewport: React.FC = () => {
 
         layerCtx.save();
         layerCtx.fillStyle = color.primary;
-        
-        // Apply selection boundary clipping
         selectionSystemInstance.applySelectionClip(layerCtx, selection);
 
         brushEngineInstance.drawStroke(
@@ -374,28 +423,18 @@ export const CanvasViewport: React.FC = () => {
           brushSettings,
           pressure,
           speed,
-          layerManagerInstance.getOrCreateCanvas(doc.activeLayerId, doc.width, doc.height) // for smudger
+          layerManagerInstance.getOrCreateCanvas(doc.activeLayerId, doc.width, doc.height)
         );
         layerCtx.restore();
-
-        // Broadcast drawing segment to peers
-        collabInstance.broadcastDrawing(doc.activeLayerId, {
-          x: stabilized.pt.x,
-          y: stabilized.pt.y,
-          color: color.primary,
-          size: brushSettings.size,
-        });
 
         brushEngineInstance['lastPoint'] = stabilized.pt;
       }
     }
 
-    // Handle Lasso Selection tool
     if (isDrawing && activeTool === 'lasso') {
       setCurrentPenPath((prev) => [...prev, canvasPt]);
     }
 
-    // Handle shape drag preview
     if (isDrawing && activeTool === 'shape' && shapeDrag) {
       setShapeDrag({ start: shapeDrag.start, end: canvasPt });
     }
@@ -403,21 +442,21 @@ export const CanvasViewport: React.FC = () => {
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (isPinchingRef.current) return;
-    // Left click or middle mouse click for panning
-    if (activeTool === 'hand' || e.button === 1 || e.spaceKey) {
+
+    const sx = getScreenCoords(e.clientX, e.clientY).x;
+    const sy = getScreenCoords(e.clientX, e.clientY).y;
+
+    if (shouldPan(activeTool, e.button, isSpaceHeldRef.current)) {
+      e.preventDefault();
       setIsPanning(true);
-      setPanStart({ x: e.clientX, y: e.clientY });
+      setPanStart({ x: sx, y: sy });
       return;
     }
 
     const canvas = compositeCanvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
     const canvasPt = engineInstance.screenToCanvas(sx, sy);
 
-    // Move tool logic: Check if moving selection pixels or moving the entire active layer
     if (activeTool === 'move' && doc.activeLayerId) {
       const activeLayer = doc.layers.find((l) => l.id === doc.activeLayerId);
       if (activeLayer?.type === 'raster' && !activeLayer.locked) {
@@ -430,7 +469,6 @@ export const CanvasViewport: React.FC = () => {
         const floatCtx = floatCanvas.getContext('2d')!;
 
         if (selection.isActive && selection.path.length > 0) {
-          // 1. Capture selected pixels onto floating overlay
           floatCtx.save();
           floatCtx.beginPath();
           floatCtx.moveTo(selection.path[0].x, selection.path[0].y);
@@ -442,7 +480,6 @@ export const CanvasViewport: React.FC = () => {
           floatCtx.drawImage(layerCanvas, 0, 0);
           floatCtx.restore();
 
-          // 2. Clear selected pixels from source active layer
           layerCtx.save();
           layerCtx.beginPath();
           layerCtx.moveTo(selection.path[0].x, selection.path[0].y);
@@ -460,7 +497,6 @@ export const CanvasViewport: React.FC = () => {
           setDraggedPixelsOffset({ x: 0, y: 0 });
           setOriginalSelectionPath(selection.path);
         } else {
-          // Move the entire layer canvas content
           floatCtx.drawImage(layerCanvas, 0, 0);
           layerCtx.clearRect(0, 0, doc.width, doc.height);
 
@@ -468,30 +504,37 @@ export const CanvasViewport: React.FC = () => {
           setMoveStartCanvasPt(canvasPt);
           setDraggedPixelsCanvas(floatCanvas);
           setDraggedPixelsOffset({ x: 0, y: 0 });
-          setOriginalSelectionPath([]); // empty denotes full layer
+          setOriginalSelectionPath([]);
         }
         return;
       }
     }
 
-    // Eyedropper tool
     if (activeTool === 'eyedropper') {
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        const pixel = ctx.getImageData(sx, sy, 1, 1).data;
-        const hex = '#' + Array.from(pixel.slice(0, 3)).map(x => x.toString(16).padStart(2, '0')).join('');
+      const offscreenCanvas = layerManagerInstance.getCompositeBuffer(doc.width, doc.height);
+      const offCtx = offscreenCanvas.getContext('2d');
+      if (offCtx) {
+        offCtx.clearRect(0, 0, doc.width, doc.height);
+        layerManagerInstance.composite(offCtx, doc.layers, doc.width, doc.height);
+        const px = Math.max(0, Math.min(doc.width - 1, Math.floor(canvasPt.x)));
+        const py = Math.max(0, Math.min(doc.height - 1, Math.floor(canvasPt.y)));
+        const pixel = offCtx.getImageData(px, py, 1, 1).data;
+        const hex =
+          '#' +
+          Array.from(pixel.slice(0, 3))
+            .map((x) => x.toString(16).padStart(2, '0'))
+            .join('');
         setPrimaryColor(hex);
         addToColorHistory(hex);
       }
       return;
     }
 
-    // Vector Pen tool clicks
     if (activeTool === 'pen') {
       const anchorId = 'anc_' + Math.random().toString(36).substring(2, 9);
-      const newElement = {
+      addVectorElement(doc.id, {
         id: 'vec_' + Math.random().toString(36).substring(2, 9),
-        type: 'path' as const,
+        type: 'path',
         path: {
           id: 'path_' + Math.random().toString(36).substring(2, 9),
           anchors: [
@@ -500,7 +543,7 @@ export const CanvasViewport: React.FC = () => {
               point: canvasPt,
               handleIn: null,
               handleOut: null,
-              type: 'corner' as const,
+              type: 'corner',
             },
           ],
           closed: false,
@@ -508,29 +551,26 @@ export const CanvasViewport: React.FC = () => {
           strokeWidth: 4,
           fill: null,
         },
-      };
-      addVectorElement(doc.id, newElement);
+      });
       pushHistory(doc.id);
       return;
     }
 
-    // Raster drawing starts
     if (activeTool === 'brush' || activeTool === 'eraser') {
       setIsDrawing(true);
       brushEngineInstance.reset();
-      
+
       const activeLayer = doc.layers.find((l) => l.id === doc.activeLayerId);
       if (activeLayer?.locked) return;
 
       const layerCtx = layerManagerInstance.getContext(doc.activeLayerId || '');
       if (layerCtx) {
         const stabilized = brushEngineInstance.stabilizePointer(canvasPt, brushSettings.stabilizer, true);
-        
+
         layerCtx.save();
         layerCtx.fillStyle = color.primary;
         selectionSystemInstance.applySelectionClip(layerCtx, selection);
 
-        // Stamp first dot
         brushEngineInstance.drawStroke(
           layerCtx,
           stabilized.pt,
@@ -546,14 +586,12 @@ export const CanvasViewport: React.FC = () => {
       return;
     }
 
-    // Lasso drawing starts
     if (activeTool === 'lasso') {
       setIsDrawing(true);
       setCurrentPenPath([canvasPt]);
       return;
     }
 
-    // Shape tool drag starts
     if (activeTool === 'shape') {
       setIsDrawing(true);
       setShapeDrag({ start: canvasPt, end: canvasPt });
@@ -564,7 +602,6 @@ export const CanvasViewport: React.FC = () => {
   const handlePointerUp = () => {
     if (isPinchingRef.current) return;
 
-    // If dragging pixels, drop them back onto the layer canvas
     if (isMovingSelectionPixels && draggedPixelsCanvas && doc.activeLayerId) {
       const layerCanvas = layerManagerInstance.getOrCreateCanvas(doc.activeLayerId, doc.width, doc.height);
       const layerCtx = layerCanvas.getContext('2d')!;
@@ -573,7 +610,6 @@ export const CanvasViewport: React.FC = () => {
       layerCtx.drawImage(draggedPixelsCanvas, draggedPixelsOffset.x, draggedPixelsOffset.y);
       layerCtx.restore();
 
-      // If moving a selection, translate the selection border in the store as well
       if (originalSelectionPath.length > 0) {
         const shiftedPath = originalSelectionPath.map((pt) => ({
           x: pt.x + draggedPixelsOffset.x,
@@ -583,8 +619,6 @@ export const CanvasViewport: React.FC = () => {
       }
 
       pushHistory(doc.id);
-
-      // Reset move drag state
       setIsMovingSelectionPixels(false);
       setDraggedPixelsCanvas(null);
       setDraggedPixelsOffset({ x: 0, y: 0 });
@@ -601,12 +635,10 @@ export const CanvasViewport: React.FC = () => {
       setIsDrawing(false);
       setStabilizedLeashPt(null);
 
-      // Commit drawing history snapshot
       if (activeTool === 'brush' || activeTool === 'eraser') {
         pushHistory(doc.id);
       }
 
-      // Finish Lasso path selection
       if (activeTool === 'lasso' && currentPenPath.length > 2) {
         setSelection({
           type: 'lasso',
@@ -616,7 +648,6 @@ export const CanvasViewport: React.FC = () => {
         setCurrentPenPath([]);
       }
 
-      // Finish shape drag
       if (activeTool === 'shape' && shapeDrag && doc) {
         const previewShape = vectorSystemInstance.shapeFromDrag(
           activeShapeType,
@@ -684,64 +715,42 @@ export const CanvasViewport: React.FC = () => {
     handlePointerUp();
   };
 
+  const onPointerLeave = () => {
+    setCursorScreenPos(null);
+  };
+
   return (
-    <div
-      ref={containerRef}
-      className="flex-1 h-full bg-neutral-950 relative overflow-hidden"
-    >
+    <div ref={containerRef} className="flex-1 h-full bg-neutral-950 relative overflow-hidden">
       <canvas
         ref={compositeCanvasRef}
         onPointerMove={onPointerMove}
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
-        className="w-full h-full cursor-crosshair absolute inset-0 block select-none touch-none"
+        onPointerLeave={onPointerLeave}
+        className={`w-full h-full absolute inset-0 block select-none touch-none ${canvasCursorClass}`}
       />
 
-      {/* Collaborators Cursors Presence Overlays */}
-      {peers.map((peer) => {
-        if (!peer.cursor) return null;
-        const screenPt = engineInstance.canvasToScreen(peer.cursor.x, peer.cursor.y);
-        
-        // Only draw cursor if inside viewport bounds
-        if (screenPt.x < 0 || screenPt.y < 0 || screenPt.x > (containerRef.current?.clientWidth || 0) || screenPt.y > (containerRef.current?.clientHeight || 0)) {
-          return null;
-        }
-
-        return (
+      {activeTool === 'eraser' && cursorScreenPos && eraserScreenSize >= 2 && (
+        <div
+          className="pointer-events-none absolute z-50"
+          style={{
+            left: cursorScreenPos.x - eraserScreenSize / 2,
+            top: cursorScreenPos.y - eraserScreenSize / 2,
+            width: eraserScreenSize,
+            height: eraserScreenSize,
+          }}
+        >
           <div
-            key={peer.id}
+            className="w-full h-full box-border"
             style={{
-              position: 'absolute',
-              left: screenPt.x,
-              top: screenPt.y,
-              transform: 'translate(-2px, -2px)',
-              pointerEvents: 'none',
-              zIndex: 100,
+              border: '1px solid rgba(255,255,255,0.9)',
+              boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.85)',
+              background: 'rgba(255,255,255,0.06)',
             }}
-            className="flex items-center gap-1.5 transition-all duration-75"
-          >
-            {/* Colored arrow cursor */}
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M1 1L5.5 13L7.5 7.5L13 5.5L1 1Z"
-                fill={peer.color}
-                stroke="#ffffff"
-                strokeWidth="1.5"
-                strokeLinejoin="round"
-              />
-            </svg>
-            
-            {/* Tag banner */}
-            <div
-              style={{ backgroundColor: peer.color }}
-              className="text-[9px] px-1.5 py-0.5 rounded text-white font-semibold font-sans shadow shadow-black/30 tracking-wider whitespace-nowrap"
-            >
-              {peer.name} {peer.isDrawing && '✍️'}
-            </div>
-          </div>
-        );
-      })}
+          />
+        </div>
+      )}
     </div>
   );
 };
