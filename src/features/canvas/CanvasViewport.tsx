@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useCanvasStore } from '../../store/canvasStore';
 import { useUiStore } from '../../store/uiStore';
 import { engineInstance } from '../../canvas-engine/CanvasEngine';
@@ -8,14 +8,22 @@ import { selectionSystemInstance } from '../../canvas-engine/SelectionSystem';
 import { vectorSystemInstance } from '../../canvas-engine/VectorSystem';
 import { collabInstance, Collaborator } from '../../services/collaboration';
 import { Point } from '../../types/vector';
+import { ViewportState } from '../../types/canvas';
 
 export const CanvasViewport: React.FC = () => {
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const compositeCanvasRef = useRef<HTMLCanvasElement>(null);
   const activeStrokeCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  const { documents, activeDocumentId, activeTool, color, brushSettings, selection, setSelection, setPrimaryColor, addVectorElement, pushHistory, addToColorHistory } = useCanvasStore();
+  const { documents, activeDocumentId, activeTool, activeShapeType, color, brushSettings, selection, setSelection, setPrimaryColor, addVectorElement, pushHistory, addToColorHistory } = useCanvasStore();
   const { viewport, setViewport, setCursorCoordinates, setFps } = useUiStore();
+
+  const viewportStateRef = useRef(viewport);
+  viewportStateRef.current = viewport;
+
+  const activePointersRef = useRef(new Map<number, Point>());
+  const pinchGestureRef = useRef<{ startDistance: number; startZoom: number } | null>(null);
+  const isPinchingRef = useRef(false);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -33,7 +41,106 @@ export const CanvasViewport: React.FC = () => {
   // Pen Tool editing states
   const [currentPenPath, setCurrentPenPath] = useState<Point[]>([]);
 
+  // Shape tool drag preview
+  const [shapeDrag, setShapeDrag] = useState<{ start: Point; end: Point } | null>(null);
+
   const doc = documents.find((d) => d.id === activeDocumentId);
+
+  const getScreenCoords = useCallback((clientX: number, clientY: number): Point => {
+    const canvas = compositeCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }, []);
+
+  const finalizeSelectionMove = useCallback(() => {
+    if (!isMovingSelectionPixels || !draggedPixelsCanvas || !doc?.activeLayerId) return;
+
+    const layerCanvas = layerManagerInstance.getOrCreateCanvas(doc.activeLayerId, doc.width, doc.height);
+    const layerCtx = layerCanvas.getContext('2d')!;
+
+    layerCtx.save();
+    layerCtx.drawImage(draggedPixelsCanvas, draggedPixelsOffset.x, draggedPixelsOffset.y);
+    layerCtx.restore();
+
+    if (originalSelectionPath.length > 0) {
+      const shiftedPath = originalSelectionPath.map((pt) => ({
+        x: pt.x + draggedPixelsOffset.x,
+        y: pt.y + draggedPixelsOffset.y,
+      }));
+      setSelection({ path: shiftedPath, isActive: true, type: 'lasso' });
+    }
+
+    pushHistory(doc.id);
+    setIsMovingSelectionPixels(false);
+    setDraggedPixelsCanvas(null);
+    setDraggedPixelsOffset({ x: 0, y: 0 });
+    setOriginalSelectionPath([]);
+  }, [isMovingSelectionPixels, draggedPixelsCanvas, draggedPixelsOffset, originalSelectionPath, doc, setSelection, pushHistory]);
+
+  const cancelDrawingGestures = useCallback(() => {
+    if (isDrawing) {
+      setIsDrawing(false);
+      brushEngineInstance.reset();
+      setStabilizedLeashPt(null);
+      setCurrentPenPath([]);
+      setShapeDrag(null);
+    }
+    if (isPanning) {
+      setIsPanning(false);
+    }
+    if (isMovingSelectionPixels) {
+      finalizeSelectionMove();
+    }
+  }, [isDrawing, isPanning, isMovingSelectionPixels, finalizeSelectionMove]);
+
+  const beginPinchGesture = useCallback(() => {
+    const pointers = activePointersRef.current;
+    if (pointers.size !== 2) return;
+
+    const pts = [...pointers.values()];
+    const distance = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+    if (distance < 4) return;
+
+    cancelDrawingGestures();
+    isPinchingRef.current = true;
+    pinchGestureRef.current = {
+      startDistance: distance,
+      startZoom: viewportStateRef.current.zoom,
+    };
+  }, [cancelDrawingGestures]);
+
+  const updatePinchGesture = useCallback(() => {
+    if (!isPinchingRef.current || !pinchGestureRef.current) return;
+
+    const pointers = activePointersRef.current;
+    if (pointers.size < 2) return;
+
+    const pts = [...pointers.values()];
+    const distance = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+    const center = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    const scale = distance / pinchGestureRef.current.startDistance;
+    const newZoom = Math.min(64, Math.max(0.01, pinchGestureRef.current.startZoom * scale));
+
+    setViewport((prev: ViewportState) => {
+      engineInstance.updateViewport(prev);
+      const canvasPt = engineInstance.screenToCanvas(center.x, center.y);
+      engineInstance.updateViewport({ ...prev, zoom: newZoom });
+      const screenAfter = engineInstance.canvasToScreen(canvasPt.x, canvasPt.y);
+      return {
+        zoom: newZoom,
+        x: prev.x + (center.x - screenAfter.x),
+        y: prev.y + (center.y - screenAfter.y),
+      };
+    });
+  }, [setViewport]);
+
+  const endPinchGestureIfNeeded = useCallback(() => {
+    if (activePointersRef.current.size < 2) {
+      isPinchingRef.current = false;
+      pinchGestureRef.current = null;
+    }
+  }, []);
 
   // Subscribe to multiplayer collaboration presence
   useEffect(() => {
@@ -85,9 +192,9 @@ export const CanvasViewport: React.FC = () => {
 
       if (canvas && ctx && doc) {
         // Adjust Canvas drawing buffer size
-        if (canvas.width !== viewportRef.current?.clientWidth || canvas.height !== viewportRef.current?.clientHeight) {
-          canvas.width = viewportRef.current?.clientWidth || 800;
-          canvas.height = viewportRef.current?.clientHeight || 600;
+        if (canvas.width !== containerRef.current?.clientWidth || canvas.height !== containerRef.current?.clientHeight) {
+          canvas.width = containerRef.current?.clientWidth || 800;
+          canvas.height = containerRef.current?.clientHeight || 600;
         }
 
         engineInstance.setDimensions(doc.width, doc.height, canvas.width, canvas.height);
@@ -140,6 +247,19 @@ export const CanvasViewport: React.FC = () => {
         doc.vectorElements.forEach((el) => {
           vectorSystemInstance.drawElement(ctx, el);
         });
+
+        // Draw in-progress shape preview
+        if (activeTool === 'shape' && shapeDrag) {
+          const previewShape = vectorSystemInstance.shapeFromDrag(
+            activeShapeType,
+            shapeDrag.start,
+            shapeDrag.end,
+            color.primary,
+            3,
+            null
+          );
+          vectorSystemInstance.drawShape(ctx, previewShape);
+        }
         ctx.restore();
 
         // 5. Draw Selection Marquee dashed marching ants
@@ -166,7 +286,7 @@ export const CanvasViewport: React.FC = () => {
 
     animationFrameId = requestAnimationFrame(renderLoop);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [doc, viewport, selection, activeTool, stabilizedLeashPt, brushSettings]);
+  }, [doc, viewport, selection, activeTool, activeShapeType, shapeDrag, color.primary, stabilizedLeashPt, brushSettings, isMovingSelectionPixels, draggedPixelsCanvas, draggedPixelsOffset]);
 
   if (!doc) {
     return (
@@ -184,6 +304,8 @@ export const CanvasViewport: React.FC = () => {
 
   // Handle pointer coordinate readouts
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isPinchingRef.current) return;
+
     const canvas = compositeCanvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -272,9 +394,15 @@ export const CanvasViewport: React.FC = () => {
     if (isDrawing && activeTool === 'lasso') {
       setCurrentPenPath((prev) => [...prev, canvasPt]);
     }
+
+    // Handle shape drag preview
+    if (isDrawing && activeTool === 'shape' && shapeDrag) {
+      setShapeDrag({ start: shapeDrag.start, end: canvasPt });
+    }
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isPinchingRef.current) return;
     // Left click or middle mouse click for panning
     if (activeTool === 'hand' || e.button === 1 || e.spaceKey) {
       setIsPanning(true);
@@ -424,9 +552,18 @@ export const CanvasViewport: React.FC = () => {
       setCurrentPenPath([canvasPt]);
       return;
     }
+
+    // Shape tool drag starts
+    if (activeTool === 'shape') {
+      setIsDrawing(true);
+      setShapeDrag({ start: canvasPt, end: canvasPt });
+      return;
+    }
   };
 
   const handlePointerUp = () => {
+    if (isPinchingRef.current) return;
+
     // If dragging pixels, drop them back onto the layer canvas
     if (isMovingSelectionPixels && draggedPixelsCanvas && doc.activeLayerId) {
       const layerCanvas = layerManagerInstance.getOrCreateCanvas(doc.activeLayerId, doc.width, doc.height);
@@ -478,19 +615,86 @@ export const CanvasViewport: React.FC = () => {
         });
         setCurrentPenPath([]);
       }
+
+      // Finish shape drag
+      if (activeTool === 'shape' && shapeDrag && doc) {
+        const previewShape = vectorSystemInstance.shapeFromDrag(
+          activeShapeType,
+          shapeDrag.start,
+          shapeDrag.end,
+          color.primary,
+          3,
+          null
+        );
+        if (Math.abs(previewShape.width) > 2 || Math.abs(previewShape.height) > 2) {
+          addVectorElement(doc.id, {
+            id: 'vec_' + Math.random().toString(36).substring(2, 9),
+            type: 'shape',
+            shape: previewShape,
+          });
+          pushHistory(doc.id);
+        }
+        setShapeDrag(null);
+      }
     }
+  };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const screenPt = getScreenCoords(e.clientX, e.clientY);
+    activePointersRef.current.set(e.pointerId, screenPt);
+
+    if (activePointersRef.current.size === 2) {
+      beginPinchGesture();
+      e.preventDefault();
+      return;
+    }
+
+    handlePointerDown(e);
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const screenPt = getScreenCoords(e.clientX, e.clientY);
+    if (activePointersRef.current.has(e.pointerId)) {
+      activePointersRef.current.set(e.pointerId, screenPt);
+    }
+
+    if (isPinchingRef.current && activePointersRef.current.size >= 2) {
+      updatePinchGesture();
+      return;
+    }
+
+    handlePointerMove(e);
+  };
+
+  const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    activePointersRef.current.delete(e.pointerId);
+    endPinchGestureIfNeeded();
+
+    if (isPinchingRef.current) return;
+
+    handlePointerUp();
+  };
+
+  const onPointerCancel = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    activePointersRef.current.delete(e.pointerId);
+    endPinchGestureIfNeeded();
+
+    if (isPinchingRef.current) return;
+
+    handlePointerUp();
   };
 
   return (
     <div
-      ref={viewportRef}
+      ref={containerRef}
       className="flex-1 h-full bg-neutral-950 relative overflow-hidden"
     >
       <canvas
         ref={compositeCanvasRef}
-        onPointerMove={handlePointerMove}
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
+        onPointerMove={onPointerMove}
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
         className="w-full h-full cursor-crosshair absolute inset-0 block select-none touch-none"
       />
 
@@ -500,7 +704,7 @@ export const CanvasViewport: React.FC = () => {
         const screenPt = engineInstance.canvasToScreen(peer.cursor.x, peer.cursor.y);
         
         // Only draw cursor if inside viewport bounds
-        if (screenPt.x < 0 || screenPt.y < 0 || screenPt.x > (viewportRef.current?.clientWidth || 0) || screenPt.y > (viewportRef.current?.clientHeight || 0)) {
+        if (screenPt.x < 0 || screenPt.y < 0 || screenPt.x > (containerRef.current?.clientWidth || 0) || screenPt.y > (containerRef.current?.clientHeight || 0)) {
           return null;
         }
 

@@ -25,6 +25,15 @@ export const App: React.FC = () => {
   useHotkeys('p', () => setActiveTool('pen'));
   useHotkeys('t', () => setActiveTool('text'));
   useHotkeys('i', () => setActiveTool('eyedropper'));
+  useHotkeys('u', () => setActiveTool('shape'));
+  useHotkeys('[', () => {
+    const { brushSettings, updateBrushSettings } = useCanvasStore.getState();
+    updateBrushSettings({ size: Math.max(1, brushSettings.size - 4) });
+  });
+  useHotkeys(']', () => {
+    const { brushSettings, updateBrushSettings } = useCanvasStore.getState();
+    updateBrushSettings({ size: Math.min(300, brushSettings.size + 4) });
+  });
   useHotkeys('space', (e) => {
     e.preventDefault();
     setActiveTool('hand');

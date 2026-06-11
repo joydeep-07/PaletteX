@@ -4,11 +4,11 @@ import { useUiStore } from '../../store/uiStore';
 import { layerManagerInstance } from '../../canvas-engine/LayerManager';
 import { saveProjectToDb } from '../../services/db';
 import { collabInstance } from '../../services/collaboration';
-import { Undo2, Redo2, Plus, Download, Users, Sliders, Play, Settings, Sparkles, Folder } from 'lucide-react';
+import { Undo2, Redo2, Plus, Download, Users, Sliders, Play, Settings, Sparkles, Folder, Palette, Paintbrush, Layers } from 'lucide-react';
 
 export const TopToolbar: React.FC = () => {
   const { documents, activeDocumentId, addDocument, closeDocument, setActiveDocument, undo, redo, clearSelection, color } = useCanvasStore();
-  const { viewport, setViewport, resetViewport, togglePanel } = useUiStore();
+  const { viewport, setViewport, resetViewport, togglePanel, floatingPanels } = useUiStore();
 
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [collabRoom, setCollabRoom] = useState<string>('');
@@ -19,6 +19,8 @@ export const TopToolbar: React.FC = () => {
   const [docHeight, setDocHeight] = useState(1080);
 
   const doc = documents.find((d) => d.id === activeDocumentId);
+
+  const isPanelVisible = (id: string) => floatingPanels.find((p) => p.id === id)?.visible ?? false;
 
   // File Exporter
   const handleExport = (format: 'png' | 'jpeg') => {
@@ -174,17 +176,59 @@ export const TopToolbar: React.FC = () => {
               Collab
             </button> */}
 
-            {/* Panel Toggles */}
+            {/* Panel Toggles — one button per floating panel */}
+            <div className="h-4 w-px bg-neutral-800 mx-1" />
+            <button
+              onClick={() => togglePanel('color-picker-panel')}
+              className={`p-1.5 rounded transition-colors cursor-pointer ${
+                isPanelVisible('color-picker-panel')
+                  ? 'bg-neutral-800 text-pink-400'
+                  : 'hover:bg-neutral-900 text-neutral-500 hover:text-pink-400'
+              }`}
+              title="Toggle Color Harmonizer"
+            >
+              <Palette size={13} />
+            </button>
+            <button
+              onClick={() => togglePanel('brush-settings-panel')}
+              className={`p-1.5 rounded transition-colors cursor-pointer ${
+                isPanelVisible('brush-settings-panel')
+                  ? 'bg-neutral-800 text-blue-400'
+                  : 'hover:bg-neutral-900 text-neutral-500 hover:text-blue-400'
+              }`}
+              title="Toggle Brush Dynamix"
+            >
+              <Paintbrush size={13} />
+            </button>
+            <button
+              onClick={() => togglePanel('layers-panel')}
+              className={`p-1.5 rounded transition-colors cursor-pointer ${
+                isPanelVisible('layers-panel')
+                  ? 'bg-neutral-800 text-emerald-400'
+                  : 'hover:bg-neutral-900 text-neutral-500 hover:text-emerald-400'
+              }`}
+              title="Toggle Layers & Blend Modes"
+            >
+              <Layers size={13} />
+            </button>
             <button
               onClick={() => togglePanel('ai-panel')}
-              className="p-1.5 hover:bg-neutral-900 rounded transition-colors text-purple-400 hover:text-purple-300 cursor-pointer"
-              title="Toggle AI Workspace"
+              className={`p-1.5 rounded transition-colors cursor-pointer ${
+                isPanelVisible('ai-panel')
+                  ? 'bg-neutral-800 text-purple-400'
+                  : 'hover:bg-neutral-900 text-neutral-500 hover:text-purple-400'
+              }`}
+              title="Toggle AI Synthesis Laboratory"
             >
               <Sparkles size={13} />
             </button>
             <button
               onClick={() => togglePanel('timeline-panel')}
-              className="p-1.5 hover:bg-neutral-900 rounded transition-colors text-amber-400 hover:text-amber-300 cursor-pointer"
+              className={`p-1.5 rounded transition-colors cursor-pointer ${
+                isPanelVisible('timeline-panel')
+                  ? 'bg-neutral-800 text-amber-400'
+                  : 'hover:bg-neutral-900 text-neutral-500 hover:text-amber-400'
+              }`}
               title="Toggle Animation Timeline"
             >
               <Play size={13} />
